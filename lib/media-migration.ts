@@ -1,6 +1,18 @@
 const SOURCE = "https://yaojia-zeng-film-portfolio.grandbrook16.chatgpt.site";
 type MigrationEnv = { DB: D1Database; BUCKET: R2Bucket; PORTFOLIO_MIGRATION_TOKEN?: string };
 const KEY = /^media\/[0-9a-f-]{36}$/;
+const MAX_SIZE = 1073741824;
+function sourceInfo(response: Response) {
+  // Only expose format/length diagnostics, never credentials, cookies or URLs.
+  return "HTTP " + response.status + ", type=" + (response.headers.get("content-type") ?? "missing") +
+    ", length=" + (response.headers.get("content-length") ?? "missing") +
+    ", range=" + (response.headers.get("content-range") ?? "missing") +
+    ", encoding=" + (response.headers.get("content-encoding") ?? "identity");
+}
+function mediaType(response: Response) {
+  const type = response.headers.get("content-type") ?? "";
+  return /^(image|video)\//i.test(type) ? type : null;
+}
 function reply(data: unknown, status = 200) { return Response.json(data, { status, headers: { "Cache-Control": "no-store" } }); }
 async function authorized(request: Request, secret?: string) {
   if (!secret || secret.length < 24) return false;
@@ -46,12 +58,27 @@ export async function handleMediaMigration(request: Request, env: MigrationEnv, 
       return reply({ok:true,alreadyPresent:true,size:existing.size});
     }
     stage = "读取原站文件";
-    const source = await fetcher(SOURCE + "/api/media/" + encodeURIComponent(key), {redirect:"manual",headers:{"Accept-Encoding":"identity"}});
-    if (!source.ok || !source.body) { await source.body?.cancel(); return reply({error:"Original website returned HTTP " + source.status + ". The file has not been copied."}, 502); }
-    const size = Number(source.headers.get("content-length"));
-    const contentType = source.headers.get("content-type") ?? "";
-    if (!Number.isSafeInteger(size) || size < 1 || size > 1073741824 || !/^(image|video)\//.test(contentType) || source.headers.get("content-encoding")) {
-      await source.body.cancel(); return reply({error:"Original file size or format could not be verified."}, 502);
+    const url = SOURCE + "/api/media/" + encodeURIComponent(key);
+    // Content-Length can disappear when a proxy streams a response. Content-Range
+    // carries the original object size independently of that transfer framing.
+    const probe = await fetcher(url, {redirect:"manual",headers:{"Accept-Encoding":"identity",Range:"bytes=0-0"}});
+    const diagnostic = sourceInfo(probe);
+    const contentType = mediaType(probe);
+    const range = /^bytes 0-0\/(\d+)$/.exec(probe.headers.get("content-range") ?? "");
+    const size = probe.status === 206 && range ? Number(range[1]) :
+      probe.status === 200 && !probe.headers.get("content-encoding") ? Number(probe.headers.get("content-length")) : NaN;
+    await probe.body?.cancel();
+    if (!contentType) return reply({error:"原站返回的不是图片或视频，可能是登录页或错误页。" + diagnostic}, 502);
+    if (!Number.isSafeInteger(size) || size < 1 || size > MAX_SIZE)
+      return reply({error:"无法确认原文件总大小。" + diagnostic}, 502);
+    const source = await fetcher(url, {redirect:"manual",headers:{"Accept-Encoding":"identity",Range:"bytes=0-" + (size - 1)}});
+    const fullRange = source.headers.get("content-range");
+    const expectedRange = "bytes 0-" + (size - 1) + "/" + size;
+    if (!source.ok || !source.body || mediaType(source) !== contentType ||
+        (source.status !== 200 && source.status !== 206) ||
+        (source.status === 206 && fullRange !== expectedRange)) {
+      await source.body?.cancel();
+      return reply({error:"原站没有返回完整的媒体文件。" + sourceInfo(source)}, 502);
     }
     stage = "写入新存储桶";
     const body = source.body.pipeThrough(new FixedLengthStream(size));
