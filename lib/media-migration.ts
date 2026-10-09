@@ -29,29 +29,41 @@ export async function handleMediaMigration(request: Request, env: MigrationEnv, 
   if (!(await authorized(request, env.PORTFOLIO_MIGRATION_TOKEN))) return reply({error:"Migration is disabled or the temporary key is incorrect. Set PORTFOLIO_MIGRATION_TOKEN to a secret of at least 24 characters."}, 403);
   const origin = request.headers.get("origin");
   if (origin && origin !== new URL(request.url).origin) return reply({error:"Use the migration page on this website."}, 403);
+  let stage = "读取作品记录";
   try {
+    if (!env.DB || !env.BUCKET) return reply({error:"缺少 DB 或 BUCKET 绑定，请检查 Worker 的 Bindings。"}, 503);
     const files = await mediaKeys(env.DB);
     if (request.method === "GET") return reply({files:Array.from(files, ([key,label]) => ({key,label}))});
     if (request.method !== "POST") return reply({error:"Method not allowed"}, 405);
     if (Number(request.headers.get("content-length") ?? 0) > 2048) return reply({error:"Request too large"}, 413);
     const {key} = await request.json() as {key?:unknown};
     if (typeof key !== "string" || !files.has(key)) return reply({error:"This file is not referenced by the restored portfolio."}, 400);
+    stage = "检查新存储桶";
     const existing = await env.BUCKET.head(key);
     if (existing) {
+      stage = "登记已存在文件";
       await register(env, key, existing.size, existing.httpMetadata?.contentType ?? "application/octet-stream");
       return reply({ok:true,alreadyPresent:true,size:existing.size});
     }
-    const source = await fetcher(SOURCE + "/api/media/" + encodeURIComponent(key), {redirect:"error",headers:{"Accept-Encoding":"identity"}});
+    stage = "读取原站文件";
+    const source = await fetcher(SOURCE + "/api/media/" + encodeURIComponent(key), {redirect:"manual",headers:{"Accept-Encoding":"identity"}});
     if (!source.ok || !source.body) { await source.body?.cancel(); return reply({error:"Original website returned HTTP " + source.status + ". The file has not been copied."}, 502); }
     const size = Number(source.headers.get("content-length"));
     const contentType = source.headers.get("content-type") ?? "";
     if (!Number.isSafeInteger(size) || size < 1 || size > 1073741824 || !/^(image|video)\//.test(contentType) || source.headers.get("content-encoding")) {
       await source.body.cancel(); return reply({error:"Original file size or format could not be verified."}, 502);
     }
-    const saved = await env.BUCKET.put(key, source.body, {httpMetadata:{contentType},onlyIf:{etagDoesNotMatch:"*"}});
+    stage = "写入新存储桶";
+    const body = source.body.pipeThrough(new FixedLengthStream(size));
+    const saved = await env.BUCKET.put(key, body, {httpMetadata:{contentType},onlyIf:{etagDoesNotMatch:"*"}});
     const meta = saved ?? await env.BUCKET.head(key);
     if (!meta || meta.size !== size) return reply({error:"Copied file size does not match. No completed upload record was added."}, 502);
+    stage = "登记复制完成的文件";
     await register(env, key, size, contentType);
     return reply({ok:true,size});
-  } catch { return reply({error:"Copy failed. Retry to resume completed files; keep this page open while copying."}, 502); }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message.replace(/https?:\/\/\S+/g, "[URL]").slice(0,220) : "Unknown runtime error";
+    console.error("Media migration failed at:", stage, reason);
+    return reply({error:stage + "失败：" + reason + "。已完成的文件会保留。"}, 502);
+  }
 }
