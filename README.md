@@ -1,29 +1,29 @@
 # Yaojia Zeng — Film & Narrative
 
-A film, screenwriting and interactive-narrative portfolio with a spatial gallery, a work index and an About page. Personal projects and cinema references are separate collections.
+Source code for a three-page film, screenplay and creative-research portfolio: Space, Index and About. Own work and cinema references are presented as separate collections.
 
 Current website: https://yaojia-zeng-film-portfolio.grandbrook16.chatgpt.site
 
-## What this repository contains
+## Included
 
-- Complete website source, styling and spatial interactions.
-- Owner project and profile editors, video uploads and cover uploads.
-- English descriptions for the cinema-reference collection and credited film stills.
+- Full application source, styling and spatial gallery interactions.
+- Owner-only project editing, uploads and profile management.
+- English cinema descriptions, bundled cover images and film credits.
 - Database schema and migrations.
-- `data/portfolio-content-export.json`: a snapshot of the latest project edits and uploaded-file metadata.
+- `data/portfolio-public-content.json`: current portfolio text for 11 works and the personal introduction, excluding contact addresses, private links, upload names and storage records.
 
-The existing website remains the running service. Committing source to this repository does not replace or erase its database or uploaded files. Video and cover uploads live outside Git, and the content export includes their metadata rather than their binary files.
+The live website and its uploaded media remain in their existing storage. Committing this source does not overwrite or remove the owner's live changes. Uploaded video and cover file bytes are not included in this repository.
 
 ## Run locally
 
-Use Node.js 22.13 or later and the pnpm version declared in `package.json`.
+Use Node 22.13 or newer and the pnpm version declared in `package.json`.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Copy `.env.example` to `.env` and fill in the values for your environment. Local previews have their own database and file storage; they do not load the production uploads automatically. See `docs/development-reference.md` for local migrations and the existing runtime contract.
+Copy `.env.example` to a local `.env` and supply your own settings. Local storage is separate from the live website. See `docs/development-reference.md` for the development setup and authentication contract.
 
 ## Build
 
@@ -31,24 +31,21 @@ Copy `.env.example` to `.env` and fill in the values for your environment. Local
 pnpm build
 ```
 
-This produces a server application for Cloudflare Workers. It uses D1 for project information and R2 for media, with the existing Sites service providing authenticated owner identity.
+This is a Cloudflare Worker application with D1 database, R2 file storage and Sites authentication.
 
 ## Hosting
 
-GitHub stores and versions the source. The current complete application also needs a server, a database, file storage and owner authentication. A static GitHub Pages deployment cannot run the upload and editing endpoints.
+GitHub hosts this source repository. The current running website also needs its server, database, media storage and trusted owner authentication. GitHub Pages is static hosting and cannot run this application's upload and editing endpoints.
 
-Keep the existing website and its storage when using this repository as a source backup. To move the running application to a different host, transfer the exported content and the actual uploaded media, configure D1/R2 or equivalent services, and supply trusted authentication. The current identity headers are injected by Sites; an independent host must not accept those headers as proof of identity from public requests.
+Keep the current hosted website for the full existing experience. An independent deployment requires provisioned storage, transferred media, restored data and trusted authentication. Never trust client-supplied `oai-authenticated-user-*` headers on a publicly accessible independent deployment.
 
-Do not commit `.env`, credentials, local runtime directories or upload-session data. `.env.example` contains placeholders only.
+Contact information is blank in the public source defaults and may be configured privately through the site's profile editor. No credentials, local environment files, contact-email export, upload sessions or live storage records are included.
 
-## Important files
+## Main files
 
-- `components/portfolio.tsx`: pages, project details and the owner editors.
-- `components/spatial-gallery.tsx`: spatial browsing and focus interactions.
-- `lib/cinema-data.ts`: cinema-reference descriptions.
-- `lib/portfolio-store.ts`: persistent project/profile reads and editor authorization.
-- `app/api/`: uploads, media delivery and content saving.
-- `public/images/`: bundled covers and credited cinema stills.
-- `data/portfolio-content-export.json`: latest live-content metadata snapshot.
-
-Film image credits and source links are kept in `lib/cinema-sources.ts`.
+- `components/portfolio.tsx`: pages and owner editors.
+- `components/spatial-gallery.tsx`: gallery layout and interactions.
+- `lib/cinema-data.ts`: English cinema descriptions.
+- `lib/portfolio-store.ts` and `app/api/`: database, media and editing endpoints.
+- `data/portfolio-public-content.json`: current public-facing portfolio text.
+- `lib/cinema-sources.ts`: cinema image credits.
